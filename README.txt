@@ -32,7 +32,7 @@ Architecture
   lambda/
     Contains all Lambda functions used for data ingestion and API endpoints.
     Each has its own API Gateway integration; use the HTTP method shown:
-    - fetch_openalex       POST. Ingests OpenAlex works into S3 (EventBridge/scheduled or on-demand).
+    - fetch_openalex       POST. Ingests OpenAlex works into S3.
     - trigger_trend_emr    POST. Starts EMR Serverless job for trend feature computation.
     - trigger_sagemaker    POST. Starts SageMaker Processing job for clustering.
     - s3_to_rds            POST. Syncs S3 clusters + topic_trends Parquet into RDS MySQL.
@@ -53,7 +53,7 @@ Architecture
     research_clusters, topic_trends, representative_papers (and lambda_user with grants).
 
   client/
-    Optional CLI (research_client.py) that calls the deployed API for trends and clusters.
+    CLI (research_client.py) that calls the deployed API for trends and clusters.
 
 Setup
 
