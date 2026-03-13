@@ -8,8 +8,7 @@ console = Console()
 
 
 # Paste your API Gateway URL here (no trailing slash)
-BASE_URL = "https://2atgzy5md3.execute-api.us-east-2.amazonaws.com/prod"
-# BASE_URL = "https://YOUR-API-ID.execute-api.YOUR-REGION.amazonaws.com/YOUR-STAGE"
+BASE_URL = "https://YOUR-API-ID.execute-api.YOUR-REGION.amazonaws.com/YOUR-STAGE"
 
 TREND_SORT_OPTIONS = ("emerging_score", "growth_rate", "paper_count")
 
