@@ -8,11 +8,19 @@ console = Console()
 
 
 # Paste your API Gateway URL here (no trailing slash)
-BASE_URL = "https://YOUR-API-ID.execute-api.YOUR-REGION.amazonaws.com/YOUR-STAGE"
+BASE_URL = "https://2atgzy5md3.execute-api.us-east-2.amazonaws.com/prod"
+# BASE_URL = "https://YOUR-API-ID.execute-api.YOUR-REGION.amazonaws.com/YOUR-STAGE"
 
-def get_trends():
+TREND_SORT_OPTIONS = ("emerging_score", "growth_rate", "paper_count")
+
+
+def get_trends(sort_by=None):
+    sort_by = sort_by or "emerging_score"
+    if sort_by not in TREND_SORT_OPTIONS:
+        sort_by = "emerging_score"
+    url = f"{BASE_URL}/results/trends?sort={sort_by}"
     try:
-        response = requests.get(f"{BASE_URL}/results/trends") 
+        response = requests.get(url) 
         
         if response.status_code != 200:
             console.print(f"[red]API Error {response.status_code}: {response.text}[/red]")
@@ -24,7 +32,7 @@ def get_trends():
             console.print(f"[red]Unexpected API Response: {data}[/red]")
             return
 
-        table = Table(title="Top Research Trends")
+        table = Table(title=f"Top Research Trends (sorted by {sort_by})")
         table.add_column("Topic", style="cyan")
         table.add_column("Papers", style="magenta")
         table.add_column("Emerging Score", style="yellow")
@@ -109,12 +117,14 @@ def get_clusters(cluster_id=None):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        console.print("[yellow]Usage: python trends_cli.py [trends | cluster | cluster <id>][/yellow]")
+        console.print("[yellow]Usage: python research_client.py [trends [sort] | cluster [id]][/yellow]")
+        console.print("[dim]  sort: emerging_score (default) | growth_rate | paper_count[/dim]")
         sys.exit(1)
-        
+
     cmd = sys.argv[1].lower()
     if cmd == "trends":
-        get_trends()
+        sort_arg = sys.argv[2] if len(sys.argv) > 2 else None
+        get_trends(sort_arg)
     elif cmd == "cluster":
         cid = sys.argv[2] if len(sys.argv) > 2 else None
         get_clusters(cid)
