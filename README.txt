@@ -30,13 +30,14 @@ Architecture
   Components:
 
   lambda/
-    Contains all Lambda functions used for data ingestion and API endpoints:
-    - fetch_openalex       Ingests OpenAlex works into S3 (EventBridge/scheduled or on-demand).
-    - trigger_trend_emr    Starts EMR Serverless job for trend feature computation.
-    - trigger_sagemaker   Starts SageMaker Processing job for clustering.
-    - s3_to_rds           Syncs S3 clusters + topic_trends Parquet into RDS MySQL.
-    - get_clusters        GET API: list clusters or cluster detail by cluster_id.
-    - get_recent_trends   GET API: top trends (query param sort=emerging_score|growth_rate|paper_count).
+    Contains all Lambda functions used for data ingestion and API endpoints.
+    Each has its own API Gateway integration; use the HTTP method shown:
+    - fetch_openalex       POST. Ingests OpenAlex works into S3 (EventBridge/scheduled or on-demand).
+    - trigger_trend_emr    POST. Starts EMR Serverless job for trend feature computation.
+    - trigger_sagemaker    POST. Starts SageMaker Processing job for clustering.
+    - s3_to_rds            POST. Syncs S3 clusters + topic_trends Parquet into RDS MySQL.
+    - get_clusters         GET. List clusters or cluster detail by cluster_id.
+    - get_recent_trends    GET. Top trends (query param sort=emerging_score|growth_rate|paper_count).
 
   emr/
     Spark job (trend_features.py) that reads raw OpenAlex JSON from S3, computes
@@ -55,6 +56,24 @@ Architecture
     Optional CLI (research_client.py) that calls the deployed API for trends and clusters.
 
 Setup
+
+  Dependencies
+
+    Client (local): requests, rich
+      pip install requests rich
+
+    Lambda (bundle into each deployment package as needed):
+      fetch_openalex     requests, boto3 (boto3 in Lambda runtime)
+      trigger_trend_emr  boto3
+      trigger_sagemaker  boto3
+      s3_to_rds          boto3, pymysql, awswrangler
+      get_clusters       pymysql
+      get_recent_trends  pymysql
+
+    EMR (trend_features.py): PySpark is provided by the EMR Serverless runtime.
+
+    SageMaker (clustering_processor.py): pandas, numpy, scikit-learn, boto3
+      are provided by the SageMaker scikit-learn image (e.g. 257758044811.dkr.ecr.*/sagemaker-scikit-learn).
 
   1. Create an S3 bucket (e.g. research-trend-analyzer) and optional prefixes:
      - raw/openalex/     (filled by fetch_openalex)
@@ -105,20 +124,24 @@ Setup
        DB_HOST, DB_USER, DB_PASS
        (Uses DB name researchtrend in code.)
 
-  6. Wire APIs: create API Gateway REST API and connect:
-     - GET /results/trends   -> get_recent_trends
-     - GET /results/clusters -> get_clusters (optional query: cluster_id)
-     - POST (or GET) to trigger_sagemaker if you expose it; same for trigger_trend_emr.
+  6. Wire APIs: create an API Gateway (or one per Lambda) and connect each Lambda:
+     GET:
+       - get_recent_trends  (e.g. GET /results/trends?sort=...)
+       - get_clusters       (e.g. GET /results/clusters?cluster_id=...)
+     POST:
+       - fetch_openalex
+       - trigger_trend_emr
+       - trigger_sagemaker
+       - s3_to_rds
 
-  7. Optional: Schedule fetch_openalex (e.g. daily via EventBridge), then trigger
-     trigger_trend_emr and trigger_sagemaker (in any order), then run s3_to_rds after
-     both jobs complete (e.g. Step Functions or manual/second Lambda on job completion).
+  7. Client: Install dependencies (see Dependencies above; client needs requests, rich). Paste your API Gateway base URL
+     (no trailing slash) into client/research_client.py as BASE_URL. Sample runs:
 
-  8. Client: Install dependencies (e.g. requests, rich). Point the client at your API in one of these ways:
-     - Environment: export RESEARCH_TREND_API_URL=https://<api-id>.execute-api.<region>.amazonaws.com/<stage>
-       (or BASE_URL). No trailing slash.
-     - Per run: python research_client.py --api-url https://... trends
-       or python research_client.py -u https://... cluster 1
-     If unset, the client uses a built-in default. Run:
+     Trends (optional sort: emerging_score | growth_rate | paper_count; default emerging_score):
        python research_client.py trends
-       python research_client.py cluster [id]
+       python research_client.py trends paper_count
+       python research_client.py trends growth_rate
+
+     Clusters (optional cluster id for detail view):
+       python research_client.py cluster
+       python research_client.py cluster 1
