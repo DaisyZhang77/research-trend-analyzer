@@ -48,12 +48,59 @@ Architecture
     Clustering processor script (clustering_processor.py) for SageMaker Processing:
     loads NDJSON from S3, TF-IDF + KMeans, writes clusters/run.json and clusters/summary.json.
 
-  databse/
+  database/
     SQL schema (schema.sql) to create the MySQL database researchtrend and tables:
     research_clusters, topic_trends, representative_papers (and lambda_user with grants).
 
   client/
     CLI (research_client.py) that calls the deployed API for trends and clusters.
+
+Database Schema (RDS MySQL)
+
+  Database name: researchtrend
+
+  Three tables. research_clusters is the parent; both topic_trends and
+  representative_papers reference it through cluster_id. topic_trends.cluster_id
+  is nullable, so a trend row can exist before — or without — being assigned to
+  a cluster.
+
+  Table: research_clusters
+    cluster_id        INT           PRIMARY KEY
+    size              INT           number of papers in the cluster
+    top_topics        TEXT          JSON array of top topic labels
+    last_updated      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+
+  Table: topic_trends
+    id                INT           AUTO_INCREMENT PRIMARY KEY
+    topic_name        VARCHAR(255)
+    publication_date  DATE
+    paper_count       INT
+    growth_rate       DOUBLE
+    moving_avg_3d     DOUBLE        3-day moving average
+    emerging_score    DOUBLE
+    cluster_id        INT           FK -> research_clusters(cluster_id), nullable
+
+    Index: idx_date_score on (publication_date, emerging_score DESC)
+      Supports get_recent_trends, which selects the most recent
+      publication_date and then ranks that day's rows. Only the default
+      sort (emerging_score) is covered by the index; sort=growth_rate and
+      sort=paper_count still sort at query time.
+
+  Table: representative_papers
+    paper_id          VARCHAR(255)  PRIMARY KEY (OpenAlex work ID)
+    title             TEXT
+    topic             VARCHAR(255)
+    cluster_id        INT           FK -> research_clusters(cluster_id)
+    publication_date  DATE
+    abstract_summary  TEXT
+
+    InnoDB creates an index on the cluster_id foreign key, which serves
+    get_clusters' per-cluster paper lookup.
+
+  Write ordering:
+    Because both child tables reference research_clusters, a full refresh
+    must insert research_clusters first and delete it last. s3_to_rds
+    depends on this ordering.
 
 Setup
 
@@ -82,8 +129,9 @@ Setup
      - logs/emr/         (optional; EMR Serverless logs)
 
   2. Create RDS MySQL instance and run the schema:
-     mysql -h <RDS_ENDPOINT> -u <ADMIN_USER> -p < databse/schema.sql
-     (Schema creates database researchtrend, tables, and user lambda_user.)
+     mysql -h <RDS_ENDPOINT> -u <ADMIN_USER> -p < database/schema.sql
+     (Schema creates database researchtrend, tables, and user lambda_user.
+      See "Database Schema (RDS MySQL)" above for the table definitions.)
 
   3. Upload assets to S3:
      - EMR: upload emr/trend_features.py to a path such as s3://<bucket>/scripts/trend_features.py
