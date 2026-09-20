@@ -1,12 +1,46 @@
-import requests
-import boto3
-from typing import Dict, Any, List, Optional
 import json
 import os
+import random
+import time
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
+import boto3
+import requests
 
 
 OPENALEX_URL = "https://api.openalex.org/works"
+
+# Retry policy for the OpenAlex call.
+#
+# OpenAlex throttles with 429 and can return transient 5xx. Retrying
+# immediately makes throttling worse, so back off exponentially with full
+# jitter: two Lambdas that hit a 429 in the same second pick different sleep
+# durations instead of retrying in lockstep. MAX_ATTEMPTS and MAX_DELAY are
+# capped so the worst case stays well inside the Lambda timeout.
+MAX_ATTEMPTS = 5
+BASE_DELAY_SECONDS = 1.0
+MAX_DELAY_SECONDS = 16.0
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+REQUEST_TIMEOUT_SECONDS = 30
+
+
+def _backoff_delay(attempt: int) -> float:
+    """Exponential backoff with full jitter: uniform(0, min(cap, base * 2^n))."""
+    ceiling = min(MAX_DELAY_SECONDS, BASE_DELAY_SECONDS * (2 ** attempt))
+    return random.uniform(0.0, ceiling)
+
+
+def _retry_delay(response: Optional[requests.Response], attempt: int) -> float:
+    """Honor Retry-After when the server sends it, otherwise back off."""
+    if response is not None:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return min(float(retry_after), MAX_DELAY_SECONDS)
+            except ValueError:
+                pass
+    return _backoff_delay(attempt)
 
 
 def fetch_work(
@@ -24,9 +58,49 @@ def fetch_work(
         "sort": "publication_date:desc",
     }
 
-    response = requests.get(OPENALEX_URL, params=params, timeout=30)
-    response.raise_for_status()
-    return response
+    last_error: Optional[Exception] = None
+
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            response = requests.get(
+                OPENALEX_URL, params=params, timeout=REQUEST_TIMEOUT_SECONDS
+            )
+
+            if response.status_code in RETRYABLE_STATUS_CODES:
+                if attempt == MAX_ATTEMPTS - 1:
+                    response.raise_for_status()
+
+                delay = _retry_delay(response, attempt)
+                print(
+                    f"OpenAlex returned {response.status_code}; "
+                    f"retrying in {delay:.2f}s "
+                    f"(attempt {attempt + 1}/{MAX_ATTEMPTS})"
+                )
+                time.sleep(delay)
+                continue
+
+            # 4xx other than 429 means the request itself is wrong; retrying
+            # would just repeat the same mistake, so let it raise.
+            response.raise_for_status()
+            return response
+
+        except requests.exceptions.RequestException as exc:
+            last_error = exc
+
+            if attempt == MAX_ATTEMPTS - 1:
+                raise
+
+            delay = _backoff_delay(attempt)
+            print(
+                f"OpenAlex request failed ({exc}); "
+                f"retrying in {delay:.2f}s "
+                f"(attempt {attempt + 1}/{MAX_ATTEMPTS})"
+            )
+            time.sleep(delay)
+
+    raise RuntimeError(
+        f"OpenAlex request failed after {MAX_ATTEMPTS} attempts"
+    ) from last_error
 
 
 def inverted_index_to_text(inverted_index: Optional[Dict[str, List[int]]]) -> str:
